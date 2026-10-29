@@ -1,0 +1,163 @@
+[package]
+name = "mobile-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+name = "pingolin_mobile"
+
+[dependencies]
+# pingolin-crypto is its own repo (a sibling checkout; see the README)
+pingolin-crypto = { path = "../../../pingolin-crypto" }
+track-proto = { path = "../track-proto" }
+
+# UniFFI for generating FFI bindings
+uniffi = "0.30"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+hex = "0.4"
+
+# Crypto (re-exported from pingolin-crypto)
+chacha20poly1305 = "0.10"
+crypto_secretbox = "0.1"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+blake3 = "1"
+# Keyed BLAKE2b-256 — libsodium's crypto_generichash(32, msg, key), the
+# derivation the account portal and both web apps use for app-scoped keys.
+blake2 = "0.10"
+rand = "0.8"
+# VOPRF client for privacy-preserving geocode tokens (Privacy-Pass style).
+# Version + features MUST match the track server's VOPRF implementation
+# (`voprf` 0.5 with `ristretto255`) so the blinded elements, evaluations,
+# proofs, and finalized outputs interop byte-for-byte.
+voprf = { version = "0.5", features = ["ristretto255"] }
+zeroize = { version = "1", features = ["derive"] }
+argon2 = "0.5"
+srp = "0.6"
+sha2 = "0.10"
+bcrypt = "0.16"
+num-bigint = "0.4"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+# release_max_level_info statically compiles out debug!/trace! in release
+# builds (a compile-time cutoff, not just a runtime subscriber filter). This
+# prevents a release client from resurrecting debug-level logging — e.g. raw
+# coordinates in geocoding.rs — via init_logging(LogLevel::Debug). info/warn/
+# error remain available in release.
+tracing = { version = "0.1", features = ["release_max_level_info"] }
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+log = "0.4"
+
+# Async runtime
+# "time" is used directly (tokio::time::sleep / sleep_until / timeout, in
+# location.rs, background_monitor.rs and geocoding.rs), so it is declared
+# here even though tonic happens to enable it too: feature unification is
+# not a dependency declaration, and dropping tonic would otherwise break the
+# build for a reason nothing points at.
+tokio = { version = "1.43", features = ["sync", "macros", "rt-multi-thread", "time"] }
+
+# NOTE: this crate is cross-compiled (see build-android.sh) with the default
+# (stable) toolchain, which has the *-linux-android std targets installed.
+# Do NOT add a rust-toolchain.toml pin here: pinning a channel that lacks the
+# Android targets breaks the cross-compile.
+#
+# gRPC client (with TLS for HTTPS endpoints)
+# tonic 0.14 has no "tls" feature: select a crypto backend. tls-ring
+# (ring-backed rustls) is used because it cross-compiles cleanly to the
+# Android targets without the NDK toolchain that tls-aws-lc (aws-lc-rs)
+# needs. Keep both tls-webpki-roots (Mozilla CA bundle; required on Android
+# where system CAs aren't reachable) and tls-native-roots (system CAs) for
+# maximum cross-platform compatibility.
+# tonic-prost provides the runtime ProstCodec that track-proto's generated
+# client (LocationIngestClient, used in location.rs) references.
+tonic = { version = "0.14", features = ["tls-ring", "tls-webpki-roots", "tls-native-roots"] }
+tonic-prost = "0.14"
+prost = "0.14"
+futures = "0.3"
+async-stream = "0.3"
+
+# HTTP client for REST API fallback
+# Use rustls-tls-webpki-roots to bundle Mozilla CA certificates (required for Android
+# where native-roots doesn't have access to system certificates)
+reqwest = { version = "0.12", features = ["json", "rustls-tls-webpki-roots", "gzip"], default-features = false }
+
+# Utils
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+once_cell = "1"
+
+# Geocoding (local SQLite database)
+# Always use bundled SQLite for mobile SDK to ensure consistent builds
+rusqlite = { version = "0.31", features = ["bundled"] }
+zstd = "0.13"
+
+# Android logging (forwards tracing to logcat)
+[target.'cfg(target_os = "android")'.dependencies]
+tracing-android = "0.2"
+android_logger = "0.14"
+
+[dev-dependencies]
+# The location upload loop is tested against a REAL LocationIngest server on
+# loopback — the retry it performs is only observable on the wire.
+# TcpListenerStream is what lets that server take an ephemeral port instead of
+# racing for a fixed one. Dev-only: none of this reaches the shipped library.
+tokio-stream = { version = "0.1", features = ["net"] }
+
+[build-dependencies]
+uniffi = { version = "0.30", features = ["build"] }
+
+[dependencies.uniffi_bindgen]
+version = "0.30"
+optional = true
+
+[dependencies.clap]
+version = "4"
+optional = true
+features = ["derive"]
+
+[dependencies.camino]
+version = "1"
+optional = true
+
+[features]
+default = []
+bindgen = ["uniffi_bindgen", "clap", "camino"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+# Emits the canonical note-import provider list as JSON for the Note web
+# editor. Run via `scripts/regen-provider-specs.sh` after editing
+# `src/import_providers.rs`.
+[[bin]]
+name = "dump-import-providers"
+path = "src/bin/dump_import_providers.rs"
+
+# Note: UniFFI configuration is handled via proc macros in code
+
+# This crate is `exclude`d from the workspace (see ../../Cargo.toml), so it
+# inherits NO profile from it; without this block the release artifact would
+# build with Cargo's bare defaults: lto = false, codegen-units = 16. Every
+# note the phones encrypt or decrypt goes through this library.
+#
+# Fat LTO plus a single codegen unit lets the optimiser inline across crate
+# boundaries — typically 10-30% on crypto-shaped code, which is nearly all this
+# crate does. Costs build time only.
+# NOT panic = "abort": UniFFI catches panics at the FFI boundary and turns them
+# into errors the Kotlin/Swift side can handle. Aborting would convert a
+# recoverable error into a process kill on the phone.
+[profile.release]
+lto = "fat"
+codegen-units = 1

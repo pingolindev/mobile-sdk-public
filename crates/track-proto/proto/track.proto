@@ -1,0 +1,181 @@
+syntax = "proto3";
+package pingolin.track;
+
+// Common encrypted blob message
+message EncryptedBlob {
+    bytes nonce = 1;
+    bytes ciphertext = 2;
+    string key_id = 3;
+}
+
+// ============ Ingest Service (gRPC) ============
+
+service LocationIngest {
+    // Unary RPC for location updates - one request, one response
+    // Cloudflare proxy compatible (no streaming required)
+    rpc SendLocation(LocationUpdate) returns (LocationAck);
+}
+
+message LocationUpdate {
+    // Real device ID for server-side ownership validation (not stored in ClickHouse)
+    string device_id = 1;
+    string circle_id = 2;
+    // DEPRECATED: Server ignores this field (stores 0). Use encrypted_timestamp + day_bucket instead.
+    // Will be removed in a future version.
+    int64 timestamp_ms = 3 [deprecated = true];
+    EncryptedBlob encrypted_payload = 4;
+
+    // REMOVED: Server-side geofencing removed for E2EE compliance
+    // These fields are ignored by the server
+    optional double latitude = 5;
+    optional double longitude = 6;
+
+    // REQUIRED: Encrypted precise timestamp for E2EE metadata privacy
+    // Clients MUST encrypt the millisecond timestamp with the circle key
+    // Server rejects requests without this field
+    optional EncryptedBlob encrypted_timestamp = 7;
+
+    // REQUIRED: Privacy-preserving pseudonyms derived from circle key (Blake3 keyed hash)
+    // Server stores ONLY these pseudonyms - never plaintext IDs
+    // Server REJECTS requests without both pseudonyms (no legacy fallback)
+    optional string user_pseudonym = 8;
+    optional string device_pseudonym = 9;
+
+    // REQUIRED: Day bucket for server-side range queries (days since Unix epoch)
+    // Server uses this for efficient filtering: WHERE day_bucket BETWEEN start AND end
+    // Server REJECTS requests without day_bucket (no fallback calculation)
+    // Example: 2026-01-09 = 20462 (days since 1970-01-01)
+    optional int32 day_bucket = 10;
+
+    // Envelope encryption: wrapped msg_key for this circle/self
+    // When present, encrypted_payload was encrypted with a random msg_key,
+    // and this field contains msg_key encrypted with the circle/self key.
+    // When absent, encrypted_payload uses direct circle key encryption (legacy).
+    optional bytes wrapped_msg_key = 11;
+    optional bytes wrapped_msg_key_nonce = 12;
+
+    // LIVENESS REFRESH. The device took a fix, found it has NOT moved far enough
+    // to be worth a history row, and is checking in anyway so the product knows
+    // the phone is alive and COULD have sent a position. The server runs every
+    // check and side effect it runs for an ordinary report (auth, device
+    // ownership, circle membership, rate limit, monotonicity, pseudonym
+    // confirmation, last-seen heal, metrics) and then writes the row to
+    // `latest_locations` ONLY — never to `locations`. That is what keeps the
+    // green dot and the inactivity alerts honest without one history row per
+    // stationary minute per circle.
+    //
+    // The row still carries the FULL ciphertext, a fresh encrypted timestamp and
+    // today's day_bucket: `latest_locations_local` is a ReplacingMergeTree
+    // versioned by `inserted_at`, so a partial row would win the dedup and blank
+    // the position (track-backend clickhouse_init.rs, latest_locations section).
+    //
+    // Backward compatible in both directions: an old client omits it and gets
+    // proto3's default `false`, i.e. today's behaviour; an old server ignores an
+    // unknown field.
+    bool liveness_only = 13;
+
+    // HISTORY BACKFILL. The device was behind (it could not open this circle's
+    // current key yet) and kept the points it took meanwhile; now that it holds
+    // the key it sends them late, marked with this flag. The server writes the
+    // row to `locations` ONLY: no `latest_locations` row, no live fan-out, no
+    // alerts, so a late point never moves a live marker backwards or fires an
+    // arrival. It is checked against its own per-(device, circle) HISTORY mark
+    // instead of the live monotonicity mark, and accepted only within 48 h of
+    // the fix. Never set together with `liveness_only`.
+    //
+    // Backward compatible in both directions: an old client omits it and gets
+    // proto3's default `false`, i.e. today's behaviour; an old server ignores
+    // the unknown field and treats the point as a live report, which its
+    // freshness checks then refuse, so a client sends history only to a server
+    // that knows this field.
+    bool history_only = 14;
+}
+
+message LocationAck {
+    string device_id = 1;
+    int64 timestamp_ms = 2;
+    bool success = 3;
+    string error = 4;
+    // Backpressure feedback: queue depth as percentage (0-100)
+    // Clients should reduce send rate when this approaches 80%
+    // 0 = healthy, 100 = queue full (likely dropping messages)
+    uint32 queue_depth_percent = 5;
+}
+
+// ============ Query Service (gRPC) ============
+
+service LocationQuery {
+    // Get location history for a circle
+    rpc GetHistory(HistoryRequest) returns (HistoryResponse);
+
+    // Get latest location for all members of a circle
+    rpc GetLatestLocations(LatestRequest) returns (LatestResponse);
+
+    // Subscribe to real-time location updates for a circle
+    rpc SubscribeLocations(SubscribeRequest) returns (stream LocationEvent);
+}
+
+message HistoryRequest {
+    string circle_id = 1;
+    string user_id = 2;           // Optional: filter to specific user
+    // DEPRECATED: Use start_day_bucket and end_day_bucket instead for privacy-aware queries.
+    // Server ignores these fields if day_bucket range is provided.
+    int64 start_timestamp_ms = 3 [deprecated = true];
+    int64 end_timestamp_ms = 4 [deprecated = true];
+    int32 limit = 5;              // Max results
+    string page_token = 6;
+    // Day bucket range for privacy-aware queries (days since Unix epoch)
+    // Server filters by day_bucket, client filters precisely after decryption
+    optional int32 start_day_bucket = 7;
+    optional int32 end_day_bucket = 8;
+}
+
+message HistoryResponse {
+    repeated EncryptedLocation locations = 1;
+    string next_page_token = 2;
+}
+
+message EncryptedLocation {
+    string user_id = 1;           // Pseudonym if privacy-aware client
+    string device_id = 2;         // Pseudonym if privacy-aware client
+    // DEPRECATED: Use day_bucket for ordering and encrypted_timestamp for precise time.
+    // Server returns 0 for new data; only old data may have this populated.
+    int64 timestamp_ms = 3 [deprecated = true];
+    EncryptedBlob encrypted_payload = 4;
+    // Encrypted precise timestamp - client decrypts to get exact time
+    optional EncryptedBlob encrypted_timestamp = 5;
+    // Day bucket for client-side filtering after bulk retrieval
+    optional int32 day_bucket = 6;
+    // Envelope encryption: wrapped msg_key for decryption
+    // When present, client must unwrap msg_key first, then decrypt encrypted_payload
+    optional bytes wrapped_msg_key = 7;
+    optional bytes wrapped_msg_key_nonce = 8;
+}
+
+message LatestRequest {
+    string circle_id = 1;
+}
+
+message LatestResponse {
+    repeated EncryptedLocation locations = 1;
+}
+
+message SubscribeRequest {
+    string circle_id = 1;
+}
+
+message LocationEvent {
+    string user_id = 1;           // Pseudonym if privacy-aware client
+    string device_id = 2;         // Pseudonym if privacy-aware client
+    // DEPRECATED: Use day_bucket for ordering and encrypted_timestamp for precise time.
+    // Server returns 0; this field exists only for backwards compatibility.
+    int64 timestamp_ms = 3 [deprecated = true];
+    EncryptedBlob encrypted_payload = 4;
+    // Encrypted precise timestamp - client decrypts to get exact time
+    optional EncryptedBlob encrypted_timestamp = 5;
+    // Day bucket for ordering/grouping
+    optional int32 day_bucket = 6;
+    // Envelope encryption: wrapped msg_key for decryption
+    optional bytes wrapped_msg_key = 7;
+    optional bytes wrapped_msg_key_nonce = 8;
+}

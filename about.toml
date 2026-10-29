@@ -1,0 +1,79 @@
+# cargo-about configuration for the third-party licence inventory.
+#
+# Regenerate THIRD_PARTY_LICENSES.md with:
+#
+#     cargo install cargo-about
+#     ./generate-licenses.sh
+#
+# The repo needs TWO cargo-about runs, because crates/mobile-sdk is excluded
+# from the workspace (see the root Cargo.toml) and so has a dependency graph
+# cargo cannot resolve together with the workspace's. generate-licenses.sh runs
+# both and concatenates them; this file configures both runs.
+#
+# A dependency whose licence is not in `accepted` below makes the command
+# FAIL rather than quietly land in the notice file — that is the point of
+# running this in the first place. If a new dependency trips it, decide
+# whether the licence is acceptable before adding it. In particular a NEW
+# copyleft dependency would be a blocker here, not a note: this code ships inside
+# App Store binaries, and Pingolin can put GPL code there only because it holds
+# the copyright to all of it. Pingolin's own crates are accepted under
+# GPL-3.0-or-later by name, at the end of this file, for the same reason.
+
+accepted = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "Zlib",
+    "Unlicense",
+    "CC0-1.0",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "BSL-1.0",
+    "MPL-2.0",
+    "NCSA",
+    "BlueOak-1.0.0",
+    "OpenSSL",
+    "CDLA-Permissive-2.0",
+]
+
+# Every platform these crates are compiled for. The union matters: dependency
+# trees differ per target (the Android builds pull in android_logger and
+# tracing-android, which no other target sees), and a notice file generated for
+# one target would under-report the others.
+targets = [
+    "aarch64-linux-android",
+    "armv7-linux-androideabi",
+    "x86_64-linux-android",
+    "aarch64-apple-ios",
+    "aarch64-apple-ios-sim",
+    "x86_64-unknown-linux-gnu",
+]
+
+# Build-only dependencies are excluded: they run inside the compiler and put no
+# code in the .so, so no notice obligation attaches to them. Proc-macro crates
+# are the same in principle, but cargo-about cannot tell them apart from
+# ordinary dependencies, so they stay in the list — over-reporting is harmless,
+# missing an attribution is not. generate-licenses.sh states both in the file.
+ignore-build-dependencies = true
+# Dev-dependencies are test-only and never distributed.
+ignore-dev-dependencies = true
+ignore-transitive-dependencies = false
+
+# Pingolin's own crates, GPL-3.0-or-later. Accepted one by one so that no
+# third-party crate can arrive under a GPL licence unnoticed.
+[mobile-sdk]
+accepted = ["GPL-3.0-or-later"]
+
+[track-proto]
+accepted = ["GPL-3.0-or-later"]
+
+[note-collab-sdk]
+accepted = ["GPL-3.0-or-later"]
+
+[pingolin-crypto]
+accepted = ["GPL-3.0-or-later"]

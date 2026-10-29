@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/track-proto",
+    # note-collab-sdk (CRDT + collab crypto, UniFFI). Client-only crate
+    # whose iOS/Android binding pipelines sit next to pingolin_mobile.
+    # Unlike the mobile-sdk crate below it has no sqlite-bundled stack, so
+    # it's a normal workspace member (no link conflict with track-proto) and
+    # inherits version/edition/license from [workspace.package].
+    "crates/note-collab-sdk",
+]
+# mobile-sdk is excluded from the workspace - it's built separately for
+# iOS/Android (cargo-ndk / cargo-lipo) and depends on a sqlite-bundled
+# stack that conflicts with the sqlx setup the server crates use. The
+# same linking constraint applies whenever a downstream workspace tries
+# to pull both crates together.
+exclude = ["crates/mobile-sdk"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["Pingolin Team"]
+
+# track-proto inherits these via `*.workspace = true`. Versions match
+# what the track server's workspace uses, so linking across the two stays
+# binary-compatible.
+#
+# tonic 0.14: hyper-1.0 ecosystem; the prost codegen is split out of
+# tonic-build into tonic-prost (runtime codec) + tonic-prost-build
+# (build-time codegen). Generated code references
+# `tonic_prost::ProstCodec` instead of `tonic::codec::ProstCodec`, so any
+# crate exposing generated code (track-proto) needs a runtime tonic-prost
+# dep. TLS: pick a crypto backend, tls-ring [ring] or tls-aws-lc
+# [aws-lc-rs], and "tls-native-roots" for the platform root store.
+# tls-ring is used because it cross-compiles cleanly to the Android
+# targets (aarch64/armv7/x86_64-linux-android) without the NDK toolchain
+# that aws-lc-rs requires.
+[workspace.dependencies]
+tonic = { version = "0.14", features = ["tls-ring", "tls-native-roots"] }
+tonic-prost = "0.14"
+tonic-build = "0.14"
+tonic-prost-build = "0.14"
+prost = "0.14"
+
+# note-collab-sdk is a workspace MEMBER, so THIS profile is the one it builds
+# with — a [profile.release] in a member's own Cargo.toml is silently ignored
+# by cargo. Without this block the crate doing all of Note's CRDT and
+# collab-frame crypto would build at cargo's bare defaults (lto = false,
+# codegen-units = 16). crates/mobile-sdk is excluded from the workspace, so
+# its own profile is the one honoured for it.
+#
+# Deliberately NOT `strip = "symbols"`: note-android sets
+# ndk { debugSymbolLevel = "SYMBOL_TABLE" }, so AGP strips the .so it packages
+# and hands the symbol table to Play for native crash symbolication. Stripping
+# here would produce the same APK bytes and leave AGP nothing to hand over.
+[profile.release]
+lto = "fat"
+codegen-units = 1

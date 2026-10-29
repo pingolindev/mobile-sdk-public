@@ -1,0 +1,18 @@
+[package]
+name = "track-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tonic.workspace = true
+# tonic 0.14 split prost codegen out of tonic-build: the generated client/
+# server code now references `tonic_prost::ProstCodec`, so this crate (which
+# re-exposes that generated code via include_proto!) needs tonic-prost as a
+# runtime dep.
+tonic-prost.workspace = true
+prost.workspace = true
+
+[build-dependencies]
+# tonic-prost-build replaces tonic-build for prost-based codegen in 0.14.
+tonic-prost-build.workspace = true

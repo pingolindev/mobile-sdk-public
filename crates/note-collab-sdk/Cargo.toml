@@ -1,0 +1,68 @@
+[package]
+name = "note-collab-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+name = "note_collab_sdk"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+
+[dependencies]
+# Yjs-compatible CRDT. The web side uses the JS `yjs` package; `yrs` is
+# the upstream Rust port with identical wire format, so the two talk to
+# each other through the relay without any translation layer.
+yrs = "0.21"
+uniffi = { version = "0.29", features = ["build", "cli"] }
+thiserror = "2"
+base64 = "0.22"
+
+# Crypto primitives — AEAD framing around collab frames so the relay
+# stays blind. Matches the web's XChaCha20-Poly1305 + random nonce.
+chacha20poly1305 = "0.10"
+rand = "0.8"
+# Per-note content key wrapping with the vault key — NaCl secretbox
+# (XSalsa20-Poly1305) identical to libsodium's crypto_secretbox on the
+# web side.
+crypto_secretbox = "0.1"
+# Keyed BLAKE2b matches the web's libsodium `crypto_generichash` used
+# for per-note collab key derivation, so both sides arrive at the same
+# 32-byte session key.
+blake2 = "0.10"
+# X25519 + NaCl crypto_box_seal for wrapping per-note content keys for
+# share recipients. Byte-compatible with libsodium's sealed_box on the
+# web side.
+crypto_box = { version = "0.9", features = ["seal"] }
+curve25519-dalek = "4"
+# Ed25519 sign/verify for share-invite wrap signatures. Same
+# version the mobile SDK uses, so one version is audited for both.
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+# BLAKE3 keyed_hash + derive_key for the canonical sig_input
+# hash and the SAS context key. Matches web (@noble/hashes/blake3)
+# and the mobile SDK byte-for-byte.
+blake3 = "1"
+hex = "0.4"
+uuid = "1"
+# Best-effort wiping of key material (seeds, content keys, private scalars)
+# after use. Same version the mobile SDK pins, so one version is audited for
+# both.
+zeroize = { version = "1", features = ["derive"] }
+
+[build-dependencies]
+uniffi = { version = "0.29", features = ["build"] }
+
+# NO [profile.release] HERE, ON PURPOSE. This crate is a workspace member, and
+# cargo ignores profiles in member manifests — the release profile that
+# actually applies (lto = "fat", codegen-units = 1) lives in the WORKSPACE
+# ROOT Cargo.toml. Adding one here would be dead config that reads as if it
+# did something.
+#
+# The build flags that shape the shipped libnote_collab_sdk.so live outside
+# this directory too: the workspace root Cargo.toml and the rustflags in
+# .cargo/config.toml (the 16 KB max-page-size alignment that Play requires
+# for targetSdk 35+, the chacha20 NEON cfg). A prebuilt copy of the library
+# keeps the flags it was built with, so rebuild it after changing them.

@@ -1,0 +1,65 @@
+# Workspace-wide Android target configuration.
+#
+# 16 KB PAGE SIZE. Google Play requires every app targeting Android 15+ (API 35)
+# to support 16 KB memory pages. Both Android apps target API 36, so an APK
+# containing a 4 KB-aligned .so is rejected at upload.
+#
+# build-android.sh runs cargo from the CRATE directory (`cd "$dir" && cargo
+# build ...`), and Cargo walks UP from the working directory to find its
+# config, so a file here covers every crate in the workspace, including ones
+# added later. A crate that misses the flag ships 4 KB-aligned without any
+# error (readelf shows `LOAD align 0x1000` instead of 0x4000).
+# crates/mobile-sdk has its own copy of this file; it takes precedence for that
+# crate and carries identical flags.
+#
+# Verify after any toolchain change (readelf must print 0x4000, never 0x1000):
+#   readelf -lW <lib>.so | awk '/LOAD/{print $NF}' | sort -u
+#
+# Android targets only — host builds and `cargo test` are untouched.
+#
+# ---------------------------------------------------------------------------
+# NEON FOR CHACHA20. `chacha20` 0.9.1 ships a NEON backend but gates it behind
+# an opt-in cfg, so without this flag every phone runs the portable software
+# implementation:
+#
+#   } else if #[cfg(all(chacha20_force_neon, target_arch = "aarch64", target_feature = "neon"))] {
+#           pub(crate) mod neon;
+#   } else { pub(crate) mod soft;
+#
+# (chacha20's backends.rs and lib.rs both read the same cfg.)
+# On a Galaxy A50: encrypt 104 -> 193 MB/s, decrypt 107 -> 200 MB/s.
+# ~1.9x on every note encrypt and decrypt.
+#
+# This is NOT a cryptographic change. Same algorithm, same ciphertext bytes for
+# a given key+nonce; it only picks different instructions. NEON is mandatory in
+# the arm64-v8a ABI, so there is no device that can run this .so and lacks it —
+# which is exactly why `target_feature = "neon"` is already true by default
+# (`rustc --print cfg --target aarch64-linux-android` prints it) and why no
+# runtime detection is needed.
+#
+# aarch64 ONLY: the cfg above also requires target_arch = "aarch64", so putting
+# it on the 32-bit or x86 stanzas would be inert noise.
+#
+# ⚠️ It must ALSO be in crates/mobile-sdk/.cargo/config.toml. That file takes
+# precedence for the crate cargo is invoked from, so root-only leaves
+# libpingolin_mobile.so on the soft path — the same trap as the 4 KB alignment
+# above. If you add a flag here, add it there.
+#
+# Verify the backend actually changed (soft has no NEON instructions):
+#   llvm-objdump -d libpingolin_mobile.so | grep -cE '\b(v[0-9]+\.4s|rev32|tbl)\b'
+# ---------------------------------------------------------------------------
+
+[target.aarch64-linux-android]
+rustflags = [
+    "-Clink-arg=-Wl,-z,max-page-size=16384",
+    "--cfg", "chacha20_force_neon",
+]
+
+[target.armv7-linux-androideabi]
+rustflags = ["-Clink-arg=-Wl,-z,max-page-size=16384"]
+
+[target.x86_64-linux-android]
+rustflags = ["-Clink-arg=-Wl,-z,max-page-size=16384"]
+
+[target.i686-linux-android]
+rustflags = ["-Clink-arg=-Wl,-z,max-page-size=16384"]

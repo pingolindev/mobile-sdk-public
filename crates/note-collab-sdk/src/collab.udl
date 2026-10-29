@@ -1,0 +1,121 @@
+namespace collab {
+  [Throws=CollabError]
+  bytes encrypt_collab_frame(bytes key, bytes plaintext);
+  bytes? decrypt_collab_frame(bytes key, bytes frame);
+  [Throws=CollabError]
+  bytes derive_collab_key(string note_id, bytes secret);
+
+  // Deterministic initial-body seed: apply to a fresh YjsDoc instead of
+  // replace_text so two devices seeding the same note converge to one copy
+  // rather than duplicating text. The seed's CRDT client id is derived from
+  // the content, never a constant — see `deterministic_seed_update` in lib.rs
+  // for the derivation and for why a constant id can permanently split a doc.
+  [Throws=CollabError]
+  bytes deterministic_seed_update(string content);
+
+  // Per-note content keys ------------------------------------------
+  bytes generate_content_key();
+  [Throws=CollabError]
+  WrappedKey wrap_with_vault(bytes content_key, bytes vault_key);
+  bytes? unwrap_with_vault(string wrapped_key_b64, string nonce_b64, bytes vault_key);
+  [Throws=CollabError]
+  NoteCiphertext encrypt_note_with_content_key(string plaintext, bytes content_key);
+  string? decrypt_note_with_content_key(string nonce_b64, string ciphertext_b64, bytes content_key);
+  [Throws=CollabError]
+  NoteCiphertext encrypt_note_with_content_key_v2(string plaintext, bytes content_key, string item_id);
+  string? decrypt_note_with_content_key_v2(string nonce_b64, string ciphertext_b64, bytes content_key, string item_id);
+
+  // Sealed-box wrapping for share recipients -------------------------
+  [Throws=CollabError]
+  string seal_for_recipient(bytes content_key, string recipient_public_key);
+  bytes? open_seal(string wrapped_b64, bytes private_key);
+  string? derive_sharing_public_key(bytes private_key);
+
+  // Wrap-signature primitives (Ed25519 over BLAKE3-keyed-hash) -------
+  [Throws=CollabError]
+  string sign_note_share_wrap(bytes secret_seed, NoteShareWrapParams params);
+  [Throws=CollabError]
+  boolean verify_note_share_wrap(string signing_pubkey_hex, string signature_hex, NoteShareWrapParams params);
+
+  // Verify-both that also reports the generation the signature ACTUALLY
+  // verified under (the passed version, or 0 on legacy fallback).
+  // The reader feeds `effective_generation` — NOT the server-claimed one —
+  // into its rollback/monotonicity check, so a legacy gen-0 sig the server
+  // relabels to a high generation still counts as 0 and cannot launder past
+  // the highest-seen floor.
+  [Throws=CollabError]
+  WrapVerifyResult verify_note_share_wrap_gen(string signing_pubkey_hex, string signature_hex, NoteShareWrapParams params);
+
+  // Mint a fresh Ed25519 identity keypair (32-byte secret seed +
+  // 32-byte verifying key as hex). Mirrors the mobile-sdk crate's
+  // `generate_signing_keypair`.
+  NoteSigningKeyPair generate_note_signing_keypair();
+
+  // Safety number / SAS for out-of-band identity verification --------
+  [Throws=CollabError]
+  string compute_note_safety_number(
+    string self_user_id,
+    string self_sharing_pubkey_hex,
+    string self_signing_pubkey_hex,
+    string peer_user_id,
+    string peer_sharing_pubkey_hex,
+    string peer_signing_pubkey_hex
+  );
+};
+
+dictionary NoteShareWrapParams {
+  string sender_user_id;
+  string recipient_user_id;
+  string item_id;
+  u32 content_key_version;
+  string wrapped_key_b64;
+};
+
+// Outcome of verify_note_share_wrap_gen. `verified` is the verify-both
+// boolean; `effective_generation` is the content-key generation
+// the signature validated under (the requested version, or 0 when it only
+// validated via the legacy-0 fallback / did not verify at all).
+dictionary WrapVerifyResult {
+  boolean verified;
+  u32 effective_generation;
+};
+
+dictionary WrappedKey {
+  string wrapped_key_b64;
+  string nonce_b64;
+};
+
+dictionary NoteCiphertext {
+  string nonce_b64;
+  string ciphertext_b64;
+};
+
+dictionary NoteSigningKeyPair {
+  bytes secret_seed;
+  string verifying_key_hex;
+};
+
+[Error]
+enum CollabError {
+  "InvalidStateVector",
+  "InvalidUpdate",
+  "Aead",
+  "Internal",
+};
+
+interface YjsDoc {
+  constructor();
+  bytes encode_state_vector();
+  [Throws=CollabError]
+  bytes encode_diff_since(bytes state_vector);
+  [Throws=CollabError]
+  void apply_update(bytes update);
+  [Throws=CollabError]
+  void insert_text(u32 index, string content);
+  [Throws=CollabError]
+  void remove_text(u32 index, u32 length);
+  [Throws=CollabError]
+  void replace_text(string content);
+  string get_text();
+  sequence<bytes> drain_local_updates();
+};

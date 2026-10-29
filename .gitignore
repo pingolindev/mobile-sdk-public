@@ -1,0 +1,15 @@
+# Rust build output. note-collab-sdk (a workspace member) builds into the
+# repo-root /target; the excluded mobile-sdk crate builds into its own
+# crates/mobile-sdk/target. Neither should ever be committed.
+/target
+crates/*/target
+
+# build-android.sh output: the .so files + Kotlin bindings it produces are
+# build artifacts, staged here for copying into the Android apps.
+/build
+
+# note-collab-sdk's locally generated bindings are a staging artifact — the
+# authoritative copies live in note-android (Kotlin) and note-ios (Swift). (The
+# mobile-sdk crate intentionally tracks its own crates/mobile-sdk/bindings, so
+# that path is deliberately not ignored.)
+crates/note-collab-sdk/bindings

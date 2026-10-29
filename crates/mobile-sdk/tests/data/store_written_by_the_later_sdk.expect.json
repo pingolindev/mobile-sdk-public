@@ -1,0 +1,12 @@
+{
+  "latched_circle": "d4d4d4d4-4444-4444-8444-444444444444",
+  "legacy_circle": "b1b1b1b1-1111-4111-8111-111111111111",
+  "own_public_key": "CpdzOdWA2oEtNjByyyOEH0eIEAKqQY0L2lZOW+79cBw=",
+  "pinned_users": [
+    "b2b2b2b2-2222-4222-8222-222222222222",
+    "b3b3b3b3-3333-4333-8333-333333333333"
+  ],
+  "recorded_circle": "c3c3c3c3-2222-4333-8444-555555555555",
+  "sdk": "the later SDK",
+  "signing_public_key_hex": "862defb2356418d88c4ae4870c4b9f7677df5eeb8b9563cd8fceb268679f66a3"
+}

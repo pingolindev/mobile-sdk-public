@@ -1,0 +1,29 @@
+# Android target configuration
+# Required for Android 15+ (API 35+) which uses 16KB page sizes
+#
+# ⚠️ THIS FILE TAKES PRECEDENCE over ../../.cargo/config.toml for builds run
+# from this directory, and build-android.sh does `cd "$dir" && cargo build`.
+# Cargo does NOT merge the two — the nearest file wins outright. So any flag
+# added at the workspace root must be repeated here or it silently does
+# nothing for libpingolin_mobile.so. See the long note in the root file.
+#
+# `--cfg chacha20_force_neon` switches chacha20 0.9.1 off its portable software
+# backend and onto NEON: ~1.9x on every note encrypt/decrypt, measured on a
+# Galaxy A50. Not a cryptographic change — same algorithm, same ciphertext,
+# different instructions. NEON is mandatory in the arm64-v8a ABI. aarch64 only,
+# because the crate's cfg also requires target_arch = "aarch64".
+
+[target.aarch64-linux-android]
+rustflags = [
+    "-Clink-arg=-Wl,-z,max-page-size=16384",
+    "--cfg", "chacha20_force_neon",
+]
+
+[target.armv7-linux-androideabi]
+rustflags = ["-Clink-arg=-Wl,-z,max-page-size=16384"]
+
+[target.x86_64-linux-android]
+rustflags = ["-Clink-arg=-Wl,-z,max-page-size=16384"]
+
+[target.i686-linux-android]
+rustflags = ["-Clink-arg=-Wl,-z,max-page-size=16384"]

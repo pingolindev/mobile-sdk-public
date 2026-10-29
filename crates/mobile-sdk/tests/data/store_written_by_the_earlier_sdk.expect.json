@@ -1,0 +1,10 @@
+{
+  "legacy_circle": "b1b1b1b1-1111-4111-8111-111111111111",
+  "own_public_key": "M/1BVzD4h12Ap0PbYLwCt+sTG8ezz3z8lmv3cV5gVy8=",
+  "pinned_users": [
+    "b2b2b2b2-2222-4222-8222-222222222222",
+    "b3b3b3b3-3333-4333-8333-333333333333"
+  ],
+  "sdk": "the earlier SDK",
+  "signing_public_key_hex": "99f1903ded3d97693e49ec998cae878fb9e6cf284165c4027be915d0b132ff51"
+}
